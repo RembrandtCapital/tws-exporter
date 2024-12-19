@@ -2,6 +2,15 @@ version = 1
 requires-python = ">=3.12"
 
 [[package]]
+name = "configargparse"
+version = "1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/8a/73f1008adfad01cb923255b924b1528727b8270e67cb4ef41eabdc7d783e/ConfigArgParse-1.7.tar.gz", hash = "sha256:e7067471884de5478c58a511e529f0f9bd1c66bfef1dea90935438d6c23306d1", size = 43817 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/b3/b4ac838711fd74a2b4e6f746703cf9dd2cf5462d17dac07e349234e21b97/ConfigArgParse-1.7-py3-none-any.whl", hash = "sha256:d249da6591465c6c26df64a9f73d2536e743be2f244eb3ebe61114af2f94f86b", size = 25489 },
+]
+
+[[package]]
 name = "eventkit"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -106,6 +115,15 @@ wheels = [
 ]
 
 [[package]]
+name = "prometheus-client"
+version = "0.21.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/14/7d0f567991f3a9af8d1cd4f619040c93b68f09a02b6d0b6ab1b2d1ded5fe/prometheus_client-0.21.1.tar.gz", hash = "sha256:252505a722ac04b0456be05c05f75f45d760c2911ffc45f2a06bcaed9f3ae3fb", size = 78551 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/c2/ab7d37426c179ceb9aeb109a85cda8948bb269b7561a0be870cc656eefe4/prometheus_client-0.21.1-py3-none-any.whl", hash = "sha256:594b45c410d6f4f8888940fe80b5cc2521b305a1fafe1c58609ef715a001f301", size = 54682 },
+]
+
+[[package]]
 name = "ruff"
 version = "0.8.3"
 source = { registry = "https://pypi.org/simple" }
@@ -135,7 +153,9 @@ name = "tws-exporter"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "configargparse" },
     { name = "ib-async" },
+    { name = "prometheus-client" },
 ]
 
 [package.dev-dependencies]
@@ -145,7 +165,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ib-async", specifier = ">=1.0.3" }]
+requires-dist = [
+    { name = "configargparse", specifier = ">=1.7" },
+    { name = "ib-async", specifier = ">=1.0.3" },
+    { name = "prometheus-client", specifier = ">=0.21.1" },
+]
 
 [package.metadata.requires-dev]
 dev = [
