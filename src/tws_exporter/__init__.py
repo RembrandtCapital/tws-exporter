@@ -1,10 +1,11 @@
 import asyncio
 import typing
+from datetime import datetime, timezone
 
 import configargparse  # type: ignore
 from configargparse import ArgumentParser
 
-from ib_async import IB, AccountValue, Contract, Ticker
+from ib_async import IB, AccountValue, Contract, Ticker, ContractDetails
 from prometheus_client import start_http_server, Gauge
 
 
@@ -31,6 +32,18 @@ contract_last_gauge = Gauge(
     "TWS Contract Last Price",
     ["sec_type", "symbol", "currency", "exchange"],
 )
+contract_trading_gauge = Gauge(
+    "tws_contract_trading",
+    "TWS Contract is currently trading",
+    ["sec_type", "symbol", "currency", "exchange"],
+)
+contract_liquid_gauge = Gauge(
+    "tws_contract_liquid",
+    "TWS Contract is currently liquid",
+    ["sec_type", "symbol", "currency", "exchange"],
+)
+
+watched_contract_details: list[ContractDetails] = []
 
 
 def on_account_value(account_value: AccountValue) -> None:
@@ -63,6 +76,32 @@ def on_ticker(tickers: set[Ticker]) -> None:
         contract_last_gauge.labels(**attributes).set(ticker.last)
 
 
+async def market_hours_task():
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            for details in watched_contract_details:
+                attributes = {
+                    "sec_type": details.contract.secType,
+                    "symbol": details.contract.symbol,
+                    "currency": details.contract.currency,
+                    "exchange": details.contract.exchange,
+                }
+                trading_sessions = details.tradingSessions()
+                liquid_sessions = details.liquidSessions()
+                contract_trading_gauge.labels(**attributes).set(
+                    1 if any(s.start <= now <= s.end for s in trading_sessions) else 0
+                )
+                contract_liquid_gauge.labels(**attributes).set(
+                    1 if any(s.start <= now <= s.end for s in liquid_sessions) else 0
+                )
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(e)
+
+
 async def async_main(
     tws_host: str, tws_port: int, tws_client_id: int, watch_contracts=None
 ) -> None:
@@ -85,7 +124,10 @@ async def async_main(
 
     contracts = await ib.qualifyContractsAsync(*contracts)
     for contract in contracts:
+        watched_contract_details.append((await ib.reqContractDetailsAsync(contract))[0])
         ib.reqMktData(contract)
+
+    asyncio.create_task(market_hours_task())
 
     try:
         await asyncio.Future()
