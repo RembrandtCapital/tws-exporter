@@ -18,6 +18,11 @@ class CliArgs(configargparse.Namespace):
     watch_contracts: list[str]
 
 
+ib = IB()
+
+
+up_gauge = Gauge("up", "TWS Up")
+
 account_value_gauge = Gauge(
     "tws_account_value", "TWS Account Value", ["account", "currency", "tag"]
 )
@@ -44,6 +49,36 @@ contract_liquid_gauge = Gauge(
 )
 
 watched_contract_details: list[ContractDetails] = []
+
+
+async def connect(
+    tws_host: str, tws_port: int, tws_client_id: int, watch_contracts=None
+):
+    attempts = 0
+    while True:
+        try:
+            await ib.connectAsync(tws_host, tws_port, clientId=tws_client_id)
+            print("Connected to TWS")
+            break
+        except Exception:
+            delay = min(2**attempts, 60)
+            print("Connection failed, retrying in", delay, "seconds")
+            await asyncio.sleep(delay)
+            attempts += 1
+
+    contracts = []
+    for watch in watch_contracts:
+        sec_type, symbol, currency, exchange = watch.split(":", 3)
+        contracts.append(
+            Contract(
+                secType=sec_type, symbol=symbol, currency=currency, exchange=exchange
+            )
+        )
+
+    contracts = await ib.qualifyContractsAsync(*contracts)
+    for contract in contracts:
+        watched_contract_details.append((await ib.reqContractDetailsAsync(contract))[0])
+        ib.reqMktData(contract)
 
 
 def on_account_value(account_value: AccountValue) -> None:
@@ -108,24 +143,30 @@ async def async_main(
     if watch_contracts is None:
         watch_contracts = []
 
-    ib = IB()
+    connect_task: None | asyncio.Task = None
+
+    def on_connect():
+        nonlocal connect_task
+
+        up_gauge.set(1)
+        connect_task = None
+
+    def on_disconnect():
+        nonlocal connect_task
+
+        up_gauge.set(0)
+        watched_contract_details.clear()
+        if connect_task is None:
+            connect_task = asyncio.create_task(
+                connect(tws_host, tws_port, tws_client_id, watch_contracts)
+            )
+
+    ib.connectedEvent += on_connect
+    ib.disconnectedEvent += on_disconnect
     ib.accountValueEvent += on_account_value
     ib.pendingTickersEvent += on_ticker
-    await ib.connectAsync(tws_host, tws_port, clientId=tws_client_id)
 
-    contracts = []
-    for watch in watch_contracts:
-        sec_type, symbol, currency, exchange = watch.split(":", 3)
-        contracts.append(
-            Contract(
-                secType=sec_type, symbol=symbol, currency=currency, exchange=exchange
-            )
-        )
-
-    contracts = await ib.qualifyContractsAsync(*contracts)
-    for contract in contracts:
-        watched_contract_details.append((await ib.reqContractDetailsAsync(contract))[0])
-        ib.reqMktData(contract)
+    await connect(tws_host, tws_port, tws_client_id, watch_contracts)
 
     asyncio.create_task(market_hours_task())
 
