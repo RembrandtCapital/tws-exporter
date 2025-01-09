@@ -61,7 +61,7 @@ async def connect(
             print("Connected to TWS")
             break
         except Exception:
-            delay = min(2**attempts, 60)
+            delay = 2 ** min(attempts, 3)
             print("Connection failed, retrying in", delay, "seconds")
             await asyncio.sleep(delay)
             attempts += 1
