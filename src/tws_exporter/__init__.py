@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import configargparse  # type: ignore
 from configargparse import ArgumentParser
 
-from ib_async import IB, AccountValue, Contract, Ticker, ContractDetails
+from ib_async import IB, AccountValue, Contract, Ticker, ContractDetails, PnL
 from prometheus_client import start_http_server, Gauge
 
 
@@ -30,6 +30,15 @@ account_value_info = Gauge(
     "tws_account_info",
     "TWS Account Value Info",
     ["account", "currency", "tag", "value"],
+)
+account_pnl_daily_gauge = Gauge(
+    "tws_account_pnl_daily", "TWS Account Daily PnL", ["account"]
+)
+account_pnl_unrealized_gauge = Gauge(
+    "tws_account_pnl_unrealized", "TWS Account Unrealized PnL", ["account"]
+)
+account_pnl_realized_gauge = Gauge(
+    "tws_account_pnl_realized", "TWS Account Realized PnL", ["account"]
 )
 
 contract_last_gauge = Gauge(
@@ -65,6 +74,9 @@ async def connect(
             print("Connection failed, retrying in", delay, "seconds")
             await asyncio.sleep(delay)
             attempts += 1
+
+    for account in ib.managedAccounts():
+        ib.reqPnL(account)
 
     contracts = []
     for watch in watch_contracts:
@@ -109,6 +121,12 @@ def on_ticker(tickers: set[Ticker]) -> None:
             "exchange": contract.exchange,
         }
         contract_last_gauge.labels(**attributes).set(ticker.last)
+
+
+def on_pnl(pnl: PnL) -> None:
+    account_pnl_daily_gauge.labels(account=pnl.account).set(pnl.dailyPnL)
+    account_pnl_unrealized_gauge.labels(account=pnl.account).set(pnl.unrealizedPnL)
+    account_pnl_realized_gauge.labels(account=pnl.account).set(pnl.realizedPnL)
 
 
 async def market_hours_task():
@@ -165,6 +183,7 @@ async def async_main(
     ib.disconnectedEvent += on_disconnect
     ib.accountValueEvent += on_account_value
     ib.pendingTickersEvent += on_ticker
+    ib.pnlEvent += on_pnl
 
     await connect(tws_host, tws_port, tws_client_id, watch_contracts)
 
