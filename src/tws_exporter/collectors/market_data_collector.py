@@ -48,6 +48,11 @@ class MarketDataCollector(IBCollector):
             "TWS Contract Last Price",
             labels=["sec_type", "symbol", "currency", "exchange"],
         )
+        contract_latency_gauge = GaugeMetricFamily(
+            "tws_contract_latency",
+            "TWS Contract latency since last tick",
+            labels=["sec_type", "symbol", "currency", "exchange"],
+        )
         contract_trading_gauge = GaugeMetricFamily(
             "tws_contract_trading",
             "TWS Contract is currently trading",
@@ -61,7 +66,7 @@ class MarketDataCollector(IBCollector):
 
         for ticker in self.tickers:
             contract = ticker.contract
-            if contract is None:
+            if contract is None or ticker.time is None:
                 continue
 
             labels = [
@@ -71,6 +76,9 @@ class MarketDataCollector(IBCollector):
                 contract.exchange,
             ]
             contract_last_gauge.add_metric(labels, ticker.last)
+            contract_latency_gauge.add_metric(
+                labels, (now - ticker.time).total_seconds()
+            )
 
         for details in self.contract_details:
             if details.contract is None:
@@ -94,5 +102,6 @@ class MarketDataCollector(IBCollector):
             )
 
         yield contract_last_gauge
+        yield contract_latency_gauge
         yield contract_trading_gauge
         yield contract_liquid_gauge
