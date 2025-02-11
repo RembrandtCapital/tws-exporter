@@ -1,13 +1,16 @@
 import asyncio
 import typing
-from datetime import datetime, timezone
 
 import configargparse  # type: ignore
 from configargparse import ArgumentParser
-from ib_async import IB, Contract, ContractDetails, Ticker
+from ib_async import IB
 from prometheus_client import REGISTRY, Gauge, start_http_server
 
-from tws_exporter.collectors import AccountValuesCollector, PnlCollector
+from tws_exporter.collectors import (
+    AccountValuesCollector,
+    PnlCollector,
+    MarketDataCollector,
+)
 
 
 class CliArgs(configargparse.Namespace):
@@ -24,28 +27,8 @@ ib = IB()
 
 up_gauge = Gauge("up", "TWS Up")
 
-contract_last_gauge = Gauge(
-    "tws_contract_last",
-    "TWS Contract Last Price",
-    ["sec_type", "symbol", "currency", "exchange"],
-)
-contract_trading_gauge = Gauge(
-    "tws_contract_trading",
-    "TWS Contract is currently trading",
-    ["sec_type", "symbol", "currency", "exchange"],
-)
-contract_liquid_gauge = Gauge(
-    "tws_contract_liquid",
-    "TWS Contract is currently liquid",
-    ["sec_type", "symbol", "currency", "exchange"],
-)
 
-watched_contract_details: list[ContractDetails] = []
-
-
-async def connect(
-    tws_host: str, tws_port: int, tws_client_id: int, watch_contracts=None
-):
+async def connect(tws_host: str, tws_port: int, tws_client_id: int):
     attempts = 0
     while True:
         try:
@@ -58,68 +41,8 @@ async def connect(
             await asyncio.sleep(delay)
             attempts += 1
 
-    contracts = []
-    for watch in watch_contracts:
-        sec_type, symbol, currency, exchange = watch.split(":", 3)
-        contracts.append(
-            Contract(
-                secType=sec_type, symbol=symbol, currency=currency, exchange=exchange
-            )
-        )
 
-    contracts = await ib.qualifyContractsAsync(*contracts)
-    for contract in contracts:
-        watched_contract_details.append((await ib.reqContractDetailsAsync(contract))[0])
-        ib.reqMktData(contract)
-
-
-def on_ticker(tickers: set[Ticker]) -> None:
-    for ticker in tickers:
-        contract = ticker.contract
-        if contract is None:
-            continue
-
-        attributes = {
-            "sec_type": contract.secType,
-            "symbol": contract.symbol,
-            "currency": contract.currency,
-            "exchange": contract.exchange,
-        }
-        contract_last_gauge.labels(**attributes).set(ticker.last)
-
-
-async def market_hours_task():
-    while True:
-        try:
-            now = datetime.now(timezone.utc)
-            for details in watched_contract_details:
-                attributes = {
-                    "sec_type": details.contract.secType,
-                    "symbol": details.contract.symbol,
-                    "currency": details.contract.currency,
-                    "exchange": details.contract.exchange,
-                }
-                trading_sessions = details.tradingSessions()
-                liquid_sessions = details.liquidSessions()
-                contract_trading_gauge.labels(**attributes).set(
-                    1 if any(s.start <= now <= s.end for s in trading_sessions) else 0
-                )
-                contract_liquid_gauge.labels(**attributes).set(
-                    1 if any(s.start <= now <= s.end for s in liquid_sessions) else 0
-                )
-            await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            print(e)
-
-
-async def async_main(
-    tws_host: str, tws_port: int, tws_client_id: int, watch_contracts=None
-) -> None:
-    if watch_contracts is None:
-        watch_contracts = []
-
+async def async_main(tws_host: str, tws_port: int, tws_client_id: int) -> None:
     connect_task: None | asyncio.Task = None
 
     def on_connect():
@@ -132,19 +55,15 @@ async def async_main(
         nonlocal connect_task
 
         up_gauge.set(0)
-        watched_contract_details.clear()
         if connect_task is None:
             connect_task = asyncio.create_task(
-                connect(tws_host, tws_port, tws_client_id, watch_contracts)
+                connect(tws_host, tws_port, tws_client_id)
             )
 
     ib.connectedEvent += on_connect
     ib.disconnectedEvent += on_disconnect
-    ib.pendingTickersEvent += on_ticker
 
-    await connect(tws_host, tws_port, tws_client_id, watch_contracts)
-
-    asyncio.create_task(market_hours_task())
+    await connect(tws_host, tws_port, tws_client_id)
 
     try:
         await asyncio.Future()
@@ -174,14 +93,11 @@ def main() -> None:
     args = typing.cast(CliArgs, parser.parse_args(namespace=CliArgs()))
 
     REGISTRY.register(AccountValuesCollector(ib))
+    REGISTRY.register(MarketDataCollector(ib, args.watch_contracts))
     REGISTRY.register(PnlCollector(ib))
     start_http_server(args.metrics_port, addr=args.metrics_host)
 
-    asyncio.run(
-        async_main(
-            args.tws_host, args.tws_port, args.tws_client_id, args.watch_contracts
-        )
-    )
+    asyncio.run(async_main(args.tws_host, args.tws_port, args.tws_client_id))
 
 
 if __name__ == "__main__":
