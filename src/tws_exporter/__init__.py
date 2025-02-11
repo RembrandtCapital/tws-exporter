@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 import configargparse  # type: ignore
 from configargparse import ArgumentParser
-from ib_async import IB, Contract, ContractDetails, PnL, Ticker
+from ib_async import IB, Contract, ContractDetails, Ticker
 from prometheus_client import REGISTRY, Gauge, start_http_server
 
-from tws_exporter.collectors import AccountValuesCollector
+from tws_exporter.collectors import AccountValuesCollector, PnlCollector
 
 
 class CliArgs(configargparse.Namespace):
@@ -23,16 +23,6 @@ ib = IB()
 
 
 up_gauge = Gauge("up", "TWS Up")
-
-account_pnl_daily_gauge = Gauge(
-    "tws_account_pnl_daily", "TWS Account Daily PnL", ["account"]
-)
-account_pnl_unrealized_gauge = Gauge(
-    "tws_account_pnl_unrealized", "TWS Account Unrealized PnL", ["account"]
-)
-account_pnl_realized_gauge = Gauge(
-    "tws_account_pnl_realized", "TWS Account Realized PnL", ["account"]
-)
 
 contract_last_gauge = Gauge(
     "tws_contract_last",
@@ -68,9 +58,6 @@ async def connect(
             await asyncio.sleep(delay)
             attempts += 1
 
-    for account in ib.managedAccounts():
-        ib.reqPnL(account)
-
     contracts = []
     for watch in watch_contracts:
         sec_type, symbol, currency, exchange = watch.split(":", 3)
@@ -99,12 +86,6 @@ def on_ticker(tickers: set[Ticker]) -> None:
             "exchange": contract.exchange,
         }
         contract_last_gauge.labels(**attributes).set(ticker.last)
-
-
-def on_pnl(pnl: PnL) -> None:
-    account_pnl_daily_gauge.labels(account=pnl.account).set(pnl.dailyPnL)
-    account_pnl_unrealized_gauge.labels(account=pnl.account).set(pnl.unrealizedPnL)
-    account_pnl_realized_gauge.labels(account=pnl.account).set(pnl.realizedPnL)
 
 
 async def market_hours_task():
@@ -160,7 +141,6 @@ async def async_main(
     ib.connectedEvent += on_connect
     ib.disconnectedEvent += on_disconnect
     ib.pendingTickersEvent += on_ticker
-    ib.pnlEvent += on_pnl
 
     await connect(tws_host, tws_port, tws_client_id, watch_contracts)
 
@@ -194,6 +174,7 @@ def main() -> None:
     args = typing.cast(CliArgs, parser.parse_args(namespace=CliArgs()))
 
     REGISTRY.register(AccountValuesCollector(ib))
+    REGISTRY.register(PnlCollector(ib))
     start_http_server(args.metrics_port, addr=args.metrics_host)
 
     asyncio.run(
