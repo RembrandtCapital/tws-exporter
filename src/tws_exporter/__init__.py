@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 
 import configargparse  # type: ignore
 from configargparse import ArgumentParser
+from ib_async import IB, Contract, ContractDetails, PnL, Ticker
+from prometheus_client import REGISTRY, Gauge, start_http_server
 
-from ib_async import IB, AccountValue, Contract, Ticker, ContractDetails, PnL
-from prometheus_client import start_http_server, Gauge
+from tws_exporter.collectors import AccountValuesCollector
 
 
 class CliArgs(configargparse.Namespace):
@@ -23,14 +24,6 @@ ib = IB()
 
 up_gauge = Gauge("up", "TWS Up")
 
-account_value_gauge = Gauge(
-    "tws_account_value", "TWS Account Value", ["account", "currency", "tag"]
-)
-account_value_info = Gauge(
-    "tws_account_info",
-    "TWS Account Value Info",
-    ["account", "currency", "tag", "value"],
-)
 account_pnl_daily_gauge = Gauge(
     "tws_account_pnl_daily", "TWS Account Daily PnL", ["account"]
 )
@@ -91,21 +84,6 @@ async def connect(
     for contract in contracts:
         watched_contract_details.append((await ib.reqContractDetailsAsync(contract))[0])
         ib.reqMktData(contract)
-
-
-def on_account_value(account_value: AccountValue) -> None:
-    attributes = {
-        "account": account_value.account,
-        "currency": account_value.currency,
-        "tag": account_value.tag,
-    }
-
-    try:
-        amount = float(account_value.value)
-        account_value_gauge.labels(**attributes).set(amount)
-    except ValueError:
-        attributes["value"] = account_value.value
-        account_value_info.labels(**attributes).set(1.0)
 
 
 def on_ticker(tickers: set[Ticker]) -> None:
@@ -181,7 +159,6 @@ async def async_main(
 
     ib.connectedEvent += on_connect
     ib.disconnectedEvent += on_disconnect
-    ib.accountValueEvent += on_account_value
     ib.pendingTickersEvent += on_ticker
     ib.pnlEvent += on_pnl
 
@@ -216,6 +193,7 @@ def main() -> None:
     )
     args = typing.cast(CliArgs, parser.parse_args(namespace=CliArgs()))
 
+    REGISTRY.register(AccountValuesCollector(ib))
     start_http_server(args.metrics_port, addr=args.metrics_host)
 
     asyncio.run(
