@@ -10,6 +10,7 @@ from tws_exporter.collectors import (
     AccountValuesCollector,
     PnlCollector,
     MarketDataCollector,
+    OrderCollector,
 )
 
 
@@ -94,6 +95,7 @@ def main() -> None:
 
     REGISTRY.register(AccountValuesCollector(ib))
     REGISTRY.register(MarketDataCollector(ib, args.watch_contracts))
+    REGISTRY.register(OrderCollector(ib))
     REGISTRY.register(PnlCollector(ib))
     start_http_server(args.metrics_port, addr=args.metrics_host)
 
