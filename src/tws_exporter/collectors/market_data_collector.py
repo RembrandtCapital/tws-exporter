@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Iterable
 
 from ib_async import IB, Contract, ContractDetails, Ticker
@@ -48,6 +49,11 @@ class MarketDataCollector(IBCollector):
             "TWS Contract Last Price",
             labels=["sec_type", "symbol", "currency", "exchange"],
         )
+        contract_previous_close_gauge = GaugeMetricFamily(
+            "tws_contract_previous_close",
+            "TWS Contract Previous Closing Price",
+            labels=["sec_type", "symbol", "currency", "exchange"],
+        )
         contract_latency_gauge = GaugeMetricFamily(
             "tws_contract_latency",
             "TWS Contract latency since last tick",
@@ -66,7 +72,7 @@ class MarketDataCollector(IBCollector):
 
         for ticker in self.tickers:
             contract = ticker.contract
-            if contract is None or ticker.time is None:
+            if contract is None:
                 continue
 
             labels = [
@@ -75,6 +81,12 @@ class MarketDataCollector(IBCollector):
                 contract.currency,
                 contract.exchange,
             ]
+            if isfinite(ticker.close) and ticker.close > 0:
+                contract_previous_close_gauge.add_metric(labels, ticker.close)
+
+            if ticker.time is None:
+                continue
+
             contract_last_gauge.add_metric(labels, ticker.last)
             contract_latency_gauge.add_metric(
                 labels, (now - ticker.time).total_seconds()
@@ -102,6 +114,7 @@ class MarketDataCollector(IBCollector):
             )
 
         yield contract_last_gauge
+        yield contract_previous_close_gauge
         yield contract_latency_gauge
         yield contract_trading_gauge
         yield contract_liquid_gauge
